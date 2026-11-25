@@ -3,7 +3,22 @@
  * Экраны не знают, где живёт сервер: если backend переедет, меняется только этот файл.
  */
 import type { AvatarPresetId, AvatarRef } from "@/lib/avatars";
+import type { StaffRole } from "@/lib/admin";
 import type { Brief } from "@/lib/team-search/types";
+import type {
+  AdminProjectDetail,
+  AdminProjectListItem,
+  AdminSummary,
+  AdminUserDetail,
+  AdminUserListItem,
+  AuditEntry,
+  AvatarReviewItem,
+  MatchQueueFilter,
+  MatchRequestDetail,
+  MatchRequestItem,
+  StaffMe,
+  StaffMemberItem,
+} from "./admin-types";
 import type {
   ApiErrorBody,
   Me,
@@ -13,6 +28,7 @@ import type {
   OtpPurpose,
   ProjectDetail,
   ProjectListItem,
+  ProjectStatus,
   SendInvitationsRequest,
   SendOtpResponse,
   VerifyResponse,
@@ -93,4 +109,51 @@ export const api = {
     request<{ ok: true }>(`/invitations/${invitationId}/respond`, { method: "POST", body: { accept, reason } }),
   /** Только в режиме разработки */
   simulateResponses: (id: string) => request<ProjectDetail>(`/dev/projects/${id}/simulate`, { method: "POST" }),
+
+  /** Админка: только для сотрудников платформы, остальным сервер отвечает 404 */
+  admin: {
+    me: () => request<{ staff: StaffMe }>("/admin/me"),
+    summary: () => request<{ summary: AdminSummary }>("/admin/summary"),
+
+    queue: (filter: MatchQueueFilter) => request<{ requests: MatchRequestItem[] }>(`/admin/queue?filter=${filter}`),
+    matchRequest: (id: string) => request<{ request: MatchRequestDetail }>(`/admin/queue/${id}`),
+    actOnRequest: (id: string, body: AdminQueueAction) => request<{ request: MatchRequestDetail }>(`/admin/queue/${id}`, { method: "POST", body }),
+
+    users: (params: { q?: string; status?: string; kind?: string; page?: number }) =>
+      request<{ users: AdminUserListItem[]; hasMore: boolean }>(`/admin/users?${qs(params)}`),
+    user: (id: string) => request<{ user: AdminUserDetail }>(`/admin/users/${id}`),
+    blockUser: (id: string, reason: string) => request<{ user: AdminUserDetail; withdrawn: number }>(`/admin/users/${id}/block`, { method: "POST", body: { reason } }),
+    unblockUser: (id: string, reason: string) => request<{ user: AdminUserDetail }>(`/admin/users/${id}/unblock`, { method: "POST", body: { reason } }),
+
+    projects: (params: { q?: string; status?: string; page?: number }) =>
+      request<{ projects: AdminProjectListItem[]; hasMore: boolean }>(`/admin/projects?${qs(params)}`),
+    project: (id: string) => request<{ project: AdminProjectDetail }>(`/admin/projects/${id}`),
+    setProjectStatus: (id: string, status: ProjectStatus, reason: string) =>
+      request<{ project: AdminProjectDetail }>(`/admin/projects/${id}/status`, { method: "POST", body: { status, reason } }),
+
+    avatars: (all: boolean) => request<{ avatars: AvatarReviewItem[] }>(`/admin/avatars${all ? "?all=1" : ""}`),
+    approveAvatar: (userId: string) => request<{ ok: true }>(`/admin/avatars/${userId}`, { method: "POST", body: { action: "approve" } }),
+    resetAvatar: (userId: string, reason: string) => request<{ ok: true }>(`/admin/avatars/${userId}`, { method: "POST", body: { action: "reset", reason } }),
+
+    staff: () => request<{ staff: StaffMemberItem[] }>("/admin/staff"),
+    grantRole: (phone: string, role: StaffRole) => request<{ staff: StaffMemberItem[] }>("/admin/staff", { method: "POST", body: { phone, role } }),
+    revokeRole: (userId: string) => request<{ staff: StaffMemberItem[] }>(`/admin/staff/${userId}`, { method: "DELETE" }),
+
+    audit: (params: { entityType?: string; entityId?: string; actorId?: string; before?: string; views?: "0" | "1" }) =>
+      request<{ entries: AuditEntry[]; nextBefore: string | null }>(`/admin/audit?${qs(params)}`),
+  },
 };
+
+export type AdminQueueAction =
+  | { action: "take" }
+  | { action: "release" }
+  | { action: "invite"; specialistId: string }
+  | { action: "done"; note: string }
+  | { action: "cancel"; note: string };
+
+/** Параметры запроса без пустых значений. */
+function qs(params: Record<string, string | number | undefined>): string {
+  const sp = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== "") sp.set(k, String(v));
+  return sp.toString();
+}

@@ -10,11 +10,14 @@ db/
     0003_matching_filters.sql  функция candidates_for_slot — жёсткие фильтры подбора
     0004_auth_otp.sql          коды из SMS для входа через API
     0005_media.sql             картинки в БД (media_files) и аватар профиля: медведица или своё фото
+    0006_admin.sql             админка: роли сотрудников, блокировка, журнал действий
   seeds/
     0001_dictionaries.sql      города, роли, форматы, теги (коды как во фронте)
     0002_demo.sql              500 специалистов (39 «ручных» + 461 синтетический), заказчик, пример брифа, отзывы (сгенерирован)
+    0003_demo_staff.sql        демо-сотрудники для локальной админки (на стенд и в прод не применять)
+  scripts/grant-staff.sql      выдать роль сотрудника по телефону — так появляется первый админ
   scripts/gen-demo-seed.ts     генератор 0002_demo.sql: src/mocks/specialists.ts + scripts/synthetic.ts
-  tests/constraints.sql        34 проверки правил целостности
+  tests/constraints.sql        44 проверки правил целостности
 ```
 
 Проверено на PostgreSQL 16: всё применяется с нуля, все 34 проверки проходят, а фильтры подбора на примере брифа выдают тех же кандидатов, что демо на фронте.
@@ -39,8 +42,10 @@ psql -d sozvezdie -v ON_ERROR_STOP=1 -f db/migrations/0001_init.sql
 psql -d sozvezdie -v ON_ERROR_STOP=1 -f db/migrations/0003_matching_filters.sql
 psql -d sozvezdie -v ON_ERROR_STOP=1 -f db/migrations/0004_auth_otp.sql
 psql -d sozvezdie -v ON_ERROR_STOP=1 -f db/migrations/0005_media.sql
+psql -d sozvezdie -v ON_ERROR_STOP=1 -f db/migrations/0006_admin.sql
 psql -d sozvezdie -v ON_ERROR_STOP=1 -f db/seeds/0001_dictionaries.sql
 psql -d sozvezdie -v ON_ERROR_STOP=1 -f db/seeds/0002_demo.sql
+psql -d sozvezdie -v ON_ERROR_STOP=1 -f db/seeds/0003_demo_staff.sql
 ```
 
 `0002_style_embeddings.sql` пока пропустите: без расширения pgvector он упадёт. Когда дойдёте до эмбеддингов, уточните у хостинга, можно ли включить pgvector в управляемом PostgreSQL.
@@ -52,7 +57,7 @@ psql -d sozvezdie -v ON_ERROR_STOP=1 -f db/seeds/0002_demo.sql
 ## 3. Проверить
 
 ```powershell
-psql -d sozvezdie -f db/tests/constraints.sql          # в конце: passed 34, failed 0
+psql -d sozvezdie -f db/tests/constraints.sql          # в конце: passed 44, failed 0 (на свежей базе, до запуска подбора)
 psql -d sozvezdie -c "SELECT r.code, c.display_name, c.cost, c.relaxed FROM role_slots s JOIN roles r ON r.id = s.role_id CROSS JOIN LATERAL candidates_for_slot(s.id, 1) c ORDER BY s.sort_order, c.cost"
 ```
 
@@ -79,7 +84,8 @@ npx tsx db/scripts/gen-demo-seed.ts
 
 ```powershell
 $env:PGUSER = "postgres"; $env:PGPASSWORD = "ваш_пароль"
-psql -d sozvezdie -v ON_ERROR_STOP=1 -f db/migrations/0005_media.sql
+psql -d sozvezdie -v ON_ERROR_STOP=1 -f db/migrations/0006_admin.sql
+psql -d sozvezdie -v ON_ERROR_STOP=1 -f db/seeds/0003_demo_staff.sql   # только локально
 ```
 
 ## Медиафайлы (0005)
@@ -89,3 +95,29 @@ psql -d sozvezdie -v ON_ERROR_STOP=1 -f db/migrations/0005_media.sql
 - Аватар профиля: `profiles.avatar_preset` (одна из 12 медведиц из `public/avatars`) или `profiles.avatar_media_id` (своё фото). Оба сразу — нельзя. Старое фото при смене аватара удаляется.
 - Переезд в объектное хранилище (Yandex Object Storage, Selectel): `data = NULL`, путь в `storage_key`. Код меняется только в `src/server/media.ts`.
 - Сколько места занято: `SELECT purpose, count(*), pg_size_pretty(sum(size_bytes)) FROM media_files GROUP BY purpose;`
+
+## Админка (0006)
+
+Режим администратора — для сотрудников платформы, не для владельцев организаций. Адрес — `/admin`.
+
+| Роль | Что может |
+|---|---|
+| `admin` | всё: роли сотрудников, ручная смена статуса проекта, журнал действий |
+| `moderator` | пользователи (блокировка), аватары |
+| `matcher` | очередь ручного подбора: взять заявку, пригласить специалиста, закрыть с итогом |
+
+Права по ролям — в `src/lib/admin.ts` (`PERMISSIONS`), проверка — в `src/server/admin/access.ts`. Не сотрудник видит на `/admin` и `/api/admin/*` обычную 404.
+
+**Первый админ.** Через интерфейс админом стать нельзя. Человек регистрируется на сайте по своему номеру, потом:
+
+```powershell
+psql -d sozvezdie -v phone=+79991234567 -v role=admin -f db/scripts/grant-staff.sql
+```
+
+Дальше роли выдаёт сам админ на `/admin/staff`. Себе роль поменять нельзя, последнего админа снять нельзя.
+
+**Локально** `0003_demo_staff.sql` создаёт трёх сотрудников (код 1234): админ `+7 999 100-99-98`, модератор `+7 999 100-99-97`, подборщик `+7 999 100-99-96`.
+
+**Журнал** `admin_audit_log` пишет каждое изменение и каждый просмотр карточки с телефоном (152-ФЗ: кто смотрел чьи данные). Записи нельзя изменить или удалить — это запрещает триггер.
+
+**Блокировка** (`users.status = 'blocked'`): сессии отзываются, приглашения без ответа отзываются, вход по SMS отвечает «Аккаунт заблокирован». Принятые приглашения остаются: решение по конкретному проекту принимает сотрудник.

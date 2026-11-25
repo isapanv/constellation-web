@@ -3,7 +3,7 @@ info:
   title: Созвездие API
   version: 0.1.0
   description: |
-    API MVP: вход по SMS, проекты и бриф, подбор команды, приглашения.
+    API MVP: вход по SMS, проекты и бриф, подбор команды, приглашения, админка сотрудников (/admin/*).
     Реализация — Route Handlers Next.js в `src/app/api`, логика — `src/server`, БД — PostgreSQL (`db/`).
     Сессия — httpOnly cookie `sz_session` (30 дней). Изменяющие запросы — только JSON и только со своего сайта (проверка Origin).
     Ошибки всегда в формате `{ "error": { "message": "...", "code": "..." } }`; message можно показывать пользователю.
@@ -37,6 +37,7 @@ components:
       type: object
       required: [user, profile]
       properties:
+        staffRole: { type: ["string", "null"], enum: [admin, moderator, matcher, null], description: "Роль сотрудника платформы; null — обычный пользователь" }
         user:
           type: object
           properties: { id: { type: string, format: uuid }, phone: { type: string, example: "+79991234567" } }
@@ -399,3 +400,144 @@ paths:
     post:
       summary: Только в режиме разработки — ответы за специалистов (все принимают, кроме второго)
       responses: { "200": { description: OK } }
+
+  # ---------- Админка: только сотрудники платформы ----------
+  # Не сотрудник или гость — 404 на любой /admin/* (не подтверждаем, что админка есть).
+  # Сотрудник без нужной роли — 403 forbidden. Права по ролям — src/lib/admin.ts (PERMISSIONS).
+  # Изменения и просмотры карточек с телефонами пишутся в admin_audit_log. Типы ответов — src/lib/api/admin-types.ts.
+  /admin/me:
+    get:
+      tags: [admin]
+      summary: "Моя роль сотрудника { staff: { userId, role, displayName } }"
+      responses: { "200": { description: OK }, "404": { $ref: "#/components/responses/Error" } }
+  /admin/summary:
+    get:
+      tags: [admin]
+      summary: Сводка — очередь ручного подбора, пользователи, проекты по статусам, аватары на проверке
+      responses: { "200": { description: OK } }
+  /admin/queue:
+    get:
+      tags: [admin]
+      summary: Очередь ручного подбора (все роли)
+      parameters: [{ name: filter, in: query, schema: { type: string, enum: [active, mine, closed], default: active } }]
+      responses: { "200": { description: OK } }
+  /admin/queue/{id}:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+    get:
+      tags: [admin]
+      summary: Заявка — бриф, приглашения в роль, кандидаты с телефонами (просмотр пишется в журнал)
+      responses: { "200": { description: OK }, "404": { $ref: "#/components/responses/Error" } }
+    post:
+      tags: [admin]
+      summary: Действие над заявкой (admin, matcher)
+      description: |
+        take — взять в работу (админ может забрать чужую); release — вернуть в очередь;
+        invite — пригласить специалиста от платформы (только своя заявка в работе; фильтры candidates_for_slot, лимит 3 открытых приглашения);
+        done / cancel — закрыть с итогом (note ≥ 5 символов).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - { type: object, required: [action], properties: { action: { const: take } } }
+                - { type: object, required: [action], properties: { action: { const: release } } }
+                - { type: object, required: [action, specialistId], properties: { action: { const: invite }, specialistId: { type: string, format: uuid } } }
+                - { type: object, required: [action, note], properties: { action: { enum: [done, cancel] }, note: { type: string, minLength: 5, maxLength: 1000 } } }
+      responses: { "200": { description: Заявка после действия }, "403": { $ref: "#/components/responses/Error" }, "409": { $ref: "#/components/responses/Error" } }
+  /admin/users:
+    get:
+      tags: [admin]
+      summary: Поиск пользователей (телефоны замаскированы), по 50
+      parameters:
+        - { name: q, in: query, schema: { type: string }, description: "Имя, адрес профиля или ≥ 4 цифр телефона" }
+        - { name: status, in: query, schema: { type: string, enum: [all, active, blocked, deleted] } }
+        - { name: kind, in: query, schema: { type: string, enum: [all, client, specialist, staff] } }
+        - { name: page, in: query, schema: { type: integer, minimum: 0 } }
+      responses: { "200": { description: "{ users, hasMore }" } }
+  /admin/users/{id}:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+    get:
+      tags: [admin]
+      summary: Карточка пользователя с полным телефоном (просмотр пишется в журнал)
+      responses: { "200": { description: OK }, "404": { $ref: "#/components/responses/Error" } }
+  /admin/users/{id}/block:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+    post:
+      tags: [admin]
+      summary: Заблокировать (admin, moderator). Сессии отзываются, приглашения без ответа — тоже. Себя и сотрудников нельзя
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [reason], properties: { reason: { type: string, minLength: 3, maxLength: 500 } } } } } }
+      responses: { "200": { description: "{ user, withdrawn }" }, "409": { $ref: "#/components/responses/Error" } }
+  /admin/users/{id}/unblock:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+    post:
+      tags: [admin]
+      summary: Разблокировать (admin, moderator)
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [reason], properties: { reason: { type: string, minLength: 3, maxLength: 500 } } } } } }
+      responses: { "200": { description: OK }, "409": { $ref: "#/components/responses/Error" } }
+  /admin/projects:
+    get:
+      tags: [admin]
+      summary: Все проекты, по 50
+      parameters:
+        - { name: q, in: query, schema: { type: string } }
+        - { name: status, in: query, schema: { type: string, enum: [all, draft, matching, team_selected, in_progress, delivered, cancelled] } }
+        - { name: page, in: query, schema: { type: integer, minimum: 0 } }
+      responses: { "200": { description: "{ projects, hasMore }" } }
+  /admin/projects/{id}:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+    get:
+      tags: [admin]
+      summary: Проект — роли, приглашения, ручной подбор, доступные переходы статуса, история (просмотр пишется в журнал)
+      responses: { "200": { description: OK } }
+  /admin/projects/{id}/status:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+    post:
+      tags: [admin]
+      summary: Ручная смена статуса (только admin)
+      description: |
+        Переходы: team_selected → in_progress → delivered; draft | matching | team_selected | in_progress → cancelled.
+        Отмена: приглашения без ответа → withdrawn, принятые → cancelled с причиной, занятость в календарях снимается, заявки ручного подбора закрываются.
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [status, reason], properties: { status: { type: string }, reason: { type: string, minLength: 3, maxLength: 500 } } } } } }
+      responses: { "200": { description: OK }, "409": { $ref: "#/components/responses/Error" } }
+  /admin/avatars:
+    get:
+      tags: [admin]
+      summary: Свои фото в аватарах, ещё не проверенные (?all=1 — все) (admin, moderator)
+      responses: { "200": { description: OK } }
+  /admin/avatars/{userId}:
+    parameters: [{ name: userId, in: path, required: true, schema: { type: string, format: uuid } }]
+    post:
+      tags: [admin]
+      summary: approve — оставить фото; reset — удалить фото (с причиной)
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [action], properties: { action: { enum: [approve, reset] }, reason: { type: string, minLength: 3, maxLength: 500 } } } } }
+      responses: { "200": { description: OK }, "409": { $ref: "#/components/responses/Error" } }
+  /admin/staff:
+    get:
+      tags: [admin]
+      summary: Сотрудники, действующие и бывшие (только admin)
+      responses: { "200": { description: OK } }
+    post:
+      tags: [admin]
+      summary: Выдать или поменять роль по телефону зарегистрированного человека (себе нельзя)
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [phone, role], properties: { phone: { type: string }, role: { enum: [admin, moderator, matcher] } } } } } }
+      responses: { "201": { description: OK }, "404": { $ref: "#/components/responses/Error" }, "409": { $ref: "#/components/responses/Error" } }
+  /admin/staff/{userId}:
+    parameters: [{ name: userId, in: path, required: true, schema: { type: string, format: uuid } }]
+    delete:
+      tags: [admin]
+      summary: Отозвать роль (себе и последнему админу нельзя)
+      responses: { "200": { description: OK }, "409": { $ref: "#/components/responses/Error" } }
+  /admin/audit:
+    get:
+      tags: [admin]
+      summary: Журнал действий сотрудников, по 100, новые сверху (только admin)
+      parameters:
+        - { name: entityType, in: query, schema: { type: string, enum: [user, project, match_request, staff, avatar] } }
+        - { name: entityId, in: query, schema: { type: string, format: uuid } }
+        - { name: actorId, in: query, schema: { type: string, format: uuid } }
+        - { name: before, in: query, schema: { type: string }, description: "id последней записи предыдущей страницы (nextBefore)" }
+        - { name: views, in: query, schema: { type: string, enum: ["0", "1"], default: "1" }, description: "0 — без просмотров" }
+      responses: { "200": { description: "{ entries, nextBefore }" } }

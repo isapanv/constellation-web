@@ -150,6 +150,29 @@ SELECT pg_temp.expect_error('Только картинки, не видео и �
   $q$INSERT INTO media_files (owner_id, purpose, mime, size_bytes, width, height, sha256, data)
      SELECT user_id, 'portfolio', 'video/mp4', 3, 1, 1, decode(repeat('ab', 32), 'hex'), '\x010203' FROM profiles WHERE slug = 'demo-ivan-t'$q$);
 
+-- ---------- Админка (миграция 0006) ----------
+SELECT pg_temp.expect_ok('Роль сотрудника выдаётся',
+  $q$INSERT INTO staff_members (user_id, role) SELECT user_id, 'moderator' FROM profiles WHERE slug = 'demo-ivan-t'$q$);
+SELECT pg_temp.expect_error('У человека одна действующая роль',
+  $q$INSERT INTO staff_members (user_id, role) SELECT user_id, 'matcher' FROM profiles WHERE slug = 'demo-ivan-t'$q$);
+SELECT pg_temp.expect_error('Себе роль не выдают',
+  $q$INSERT INTO staff_members (user_id, role, granted_by) SELECT user_id, 'admin', user_id FROM profiles WHERE slug = 'demo-ficha-bagova'$q$);
+SELECT pg_temp.expect_error('Блокировка — только с датой',
+  $q$UPDATE users SET status = 'blocked' WHERE phone = '+79991000001'$q$);
+SELECT pg_temp.expect_error('Блокировка — только с причиной',
+  $q$UPDATE users SET status = 'blocked', blocked_at = now() WHERE phone = '+79991000001'$q$);
+SELECT pg_temp.expect_ok('Блокировка с датой и причиной',
+  $q$UPDATE users SET status = 'blocked', blocked_at = now(), block_reason = 'спам в приглашениях' WHERE phone = '+79991000001'$q$);
+SELECT pg_temp.expect_ok('Запись в журнал действий',
+  $q$INSERT INTO admin_audit_log (action, entity_type, details) VALUES ('user.view', 'user', '{}')$q$);
+SELECT pg_temp.expect_error('Журнал нельзя исправить',
+  $q$UPDATE admin_audit_log SET action = 'user.block'$q$);
+SELECT pg_temp.expect_error('Журнал нельзя удалить',
+  $q$DELETE FROM admin_audit_log$q$);
+SELECT pg_temp.expect_error('Взятая в работу заявка — с исполнителем',
+  $q$INSERT INTO manual_match_requests (project_id, slot_id, reason, due_at, status)
+     SELECT project_id, id, 'мало кандидатов', now() + interval '24 hours', 'in_progress' FROM role_slots WHERE sort_order = 4 AND project_version = 1$q$);
+
 SELECT n, CASE WHEN ok THEN 'PASS' ELSE 'FAIL' END AS result, name FROM results ORDER BY n;
 SELECT count(*) FILTER (WHERE ok) AS passed, count(*) FILTER (WHERE NOT ok) AS failed FROM results;
 

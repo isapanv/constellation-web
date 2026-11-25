@@ -65,6 +65,19 @@ export function ProfileMenu() {
             <p className="text-sm font-semibold">{name || "Профиль не заполнен"}</p>
             {/* TODO: ссылка «Публичный профиль →» на /u/{slug} для специалистов — когда публичная страница переедет на API */}
           </div>
+          {me?.staffRole && (
+            <div className="border-b border-border py-1">
+              {pathname.startsWith("/admin") ? (
+                <Link href="/projects" role="menuitem" onClick={() => setOpen(false)} className="block px-4 py-2 text-sm hover:bg-surface-2">
+                  Мои проекты
+                </Link>
+              ) : (
+                <Link href="/admin" role="menuitem" onClick={() => setOpen(false)} className="block px-4 py-2 text-sm font-semibold hover:bg-surface-2">
+                  Админка
+                </Link>
+              )}
+            </div>
+          )}
           {profileLinks.map((l) => {
             const active = pathname === l.href || pathname.startsWith(l.href + "/");
             return (

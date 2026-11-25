@@ -4,6 +4,7 @@
  */
 import { createHash, randomBytes, randomInt, timingSafeEqual } from "node:crypto";
 import { cookies } from "next/headers";
+import type { StaffRole } from "@/lib/admin";
 import type { Me, OtpPurpose } from "@/lib/api/types";
 import { avatarFromRow, avatarUrl } from "@/lib/avatars";
 import { one, q } from "./db";
@@ -36,7 +37,8 @@ export function clientIp(req: Request): string | null {
 // ---------- Коды из SMS ----------
 
 export async function sendOtp(phone: string, purpose: OtpPurpose, ip: string | null): Promise<{ resendIn: number; devCode?: string }> {
-  const user = await one<{ id: string }>(`SELECT id FROM users WHERE phone = $1 AND status = 'active'`, [phone]);
+  const user = await one<{ id: string; status: string }>(`SELECT id, status FROM users WHERE phone = $1 AND status <> 'deleted'`, [phone]);
+  if (user?.status === "blocked") fail(403, "Аккаунт заблокирован. Если это ошибка, напишите в поддержку", "blocked");
   if (purpose === "login" && !user) fail(404, "Аккаунта с этим номером нет. Зарегистрируйтесь", "no_account");
   if (purpose === "signup" && user) fail(409, "Этот номер уже зарегистрирован. Войдите", "already_registered");
 
@@ -137,9 +139,12 @@ export async function loadMe(userId: string): Promise<Me> {
     specialist_mode: boolean | null;
     avatar_preset: string | null;
     avatar_media_id: string | null;
+    staff_role: StaffRole | null;
   }>(
-    `SELECT u.id, u.phone, p.display_name, p.slug, p.client_mode, p.specialist_mode, p.avatar_preset, p.avatar_media_id
-     FROM users u LEFT JOIN profiles p ON p.user_id = u.id WHERE u.id = $1`,
+    `SELECT u.id, u.phone, p.display_name, p.slug, p.client_mode, p.specialist_mode, p.avatar_preset, p.avatar_media_id, sm.role AS staff_role
+     FROM users u LEFT JOIN profiles p ON p.user_id = u.id
+     LEFT JOIN staff_members sm ON sm.user_id = u.id AND sm.revoked_at IS NULL
+     WHERE u.id = $1`,
     [userId],
   );
   if (!row) fail(401, "Войдите в аккаунт", "unauthorized");
@@ -154,5 +159,6 @@ export async function loadMe(userId: string): Promise<Me> {
           avatarUrl: avatarUrl(avatarFromRow(row!.avatar_preset, row!.avatar_media_id)),
         }
       : null,
+    staffRole: row!.staff_role,
   };
 }

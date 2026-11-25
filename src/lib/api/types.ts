@@ -1,3 +1,4 @@
+import type { StaffRole } from "@/lib/admin";
 /**
  * Типы ответов API — общие для сервера (src/server, src/app/api) и фронта (src/lib/api).
  * Контракт целиком описан в api/openapi.yaml.
@@ -11,6 +12,8 @@ export type ApiErrorBody = { error: { message: string; code?: string } };
 export type Me = {
   user: { id: string; phone: string };
   profile: { displayName: string; slug: string; clientMode: boolean; specialistMode: boolean; avatarUrl: string | null } | null;
+  /** Роль сотрудника платформы; null — обычный пользователь. Нужна, чтобы показать ссылку «Админка». */
+  staffRole: StaffRole | null;
 };
 
 export type OtpPurpose = "signup" | "login";
