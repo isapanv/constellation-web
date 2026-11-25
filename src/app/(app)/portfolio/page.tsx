@@ -1,4 +1,4 @@
-import { PortfolioCard } from "@/components/portfolio/portfolio-card";
+import { PortfolioCard, portfolioViewHref } from "@/components/portfolio/portfolio-card";
 import { LinkButton } from "@/components/ui/button";
 import { PageHeader } from "@/components/ui/card";
 import { myPortfolio } from "@/mocks/data";
@@ -18,7 +18,7 @@ export default function PortfolioPage() {
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {myPortfolio.map((item) => (
-            <PortfolioCard key={item.id} item={item} showStatus />
+            <PortfolioCard key={item.id} item={item} showStatus href={portfolioViewHref(item.id)} />
           ))}
         </div>
       )}

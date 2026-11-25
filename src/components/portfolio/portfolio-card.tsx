@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { Badge } from "@/components/ui/card";
 import type { PortfolioItem } from "@/lib/types";
 import { byId, formats, roles, styleTags } from "@/mocks/data";
@@ -8,10 +9,26 @@ const moderation = {
   rejected: { tone: "danger", label: "Отклонено" },
 } as const;
 
-export function PortfolioCard({ item, showStatus = false }: { item: PortfolioItem; showStatus?: boolean }) {
+export const portfolioViewHref = (id: string) => `/portfolio/view?id=${encodeURIComponent(id)}`;
+
+export function PortfolioCard({
+  item,
+  showStatus = false,
+  href,
+}: {
+  item: PortfolioItem;
+  showStatus?: boolean;
+  /** Если задан, вся карточка становится ссылкой. */
+  href?: string;
+}) {
   const m = moderation[item.moderationStatus];
-  return (
-    <article className="overflow-hidden rounded-3xl border-2 border-border bg-surface">
+  const card = (
+    <article
+      className={
+        "h-full overflow-hidden rounded-3xl border-2 border-border bg-surface" +
+        (href ? " transition-colors group-hover:border-border-strong" : "")
+      }
+    >
       <div className="relative aspect-video" style={{ background: item.coverColor }}>
         {item.isFeatured && (
           <span className="absolute left-3 top-3 rounded-full bg-black/40 px-2 py-0.5 text-xs text-white">★ Избранное</span>
@@ -34,4 +51,16 @@ export function PortfolioCard({ item, showStatus = false }: { item: PortfolioIte
       </div>
     </article>
   );
+
+  if (!href) return card;
+  return (
+    <Link
+      href={href}
+      className="group block rounded-3xl focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+    >
+      {card}
+    </Link>
+  );
 }
+
+export { moderation as portfolioModeration };
