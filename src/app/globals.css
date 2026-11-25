@@ -1,0 +1,98 @@
+@import "tailwindcss";
+
+/*
+ * Цветовые токены. Меняйте здесь — поменяется весь интерфейс.
+ * Палитра снята с маскота: кобальт толстовки — единственный яркий цвет интерфейса,
+ * лаванда — подложки и декор, лайм — только звёзды (для текста он слишком светлый).
+ */
+:root {
+  --bg: #ffffff;
+  --surface: #ffffff;
+  --surface-2: #f4f3f8;
+  --fg: #18151f;
+  --muted: #5e5778;
+  --border: #e6e4ec;
+  --border-strong: #dcdae3;
+  --accent: #3236cf;
+  --accent-hover: #2b2fbd;
+  --accent-shadow: #2023a0;
+  --accent-fg: #ffffff;
+  --accent-soft: #ecebfc;
+  --lavender: #a985e0;
+  --lavender-soft: #f1eafb;
+  --star: #d5d45f;
+  --ok: #1f7a4d;
+  --ok-soft: #e3f4ea;
+  --warn: #8a5300;
+  --warn-soft: #fbf0d9;
+  --danger: #b4233a;
+  --danger-soft: #fde8e6;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #12101c;
+    --surface: #1b1829;
+    --surface-2: #242036;
+    --fg: #f1eff8;
+    --muted: #a7a2bd;
+    --border: #2f2a45;
+    --border-strong: #3a3454;
+    --accent: #6f73ff;
+    --accent-hover: #8185ff;
+    --accent-shadow: #3d40b8;
+    --accent-fg: #ffffff;
+    --accent-soft: #272a5c;
+    --lavender: #b89af0;
+    --lavender-soft: #2a2347;
+    --star: #d5d45f;
+    --ok: #6fcf97;
+    --ok-soft: #1d3326;
+    --warn: #e5a75a;
+    --warn-soft: #3a2c19;
+    --danger: #f08b84;
+    --danger-soft: #3d1f1d;
+  }
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-fg: var(--fg);
+  --color-muted: var(--muted);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-shadow: var(--accent-shadow);
+  --color-accent-fg: var(--accent-fg);
+  --color-accent-soft: var(--accent-soft);
+  --color-lavender: var(--lavender);
+  --color-lavender-soft: var(--lavender-soft);
+  --color-star: var(--star);
+  --color-ok: var(--ok);
+  --color-ok-soft: var(--ok-soft);
+  --color-warn: var(--warn);
+  --color-warn-soft: var(--warn-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  /* Шрифты подключены из npm (@fontsource-variable), без запросов к Google */
+  --font-sans:
+    "Manrope Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  --font-display: "Unbounded Variable", "Manrope Variable", ui-sans-serif, system-ui, sans-serif;
+}
+
+@layer base {
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--font-sans);
+  }
+  /* Заголовки страниц и разделов — округлым Unbounded, как плюшевый маскот */
+  h1,
+  h2 {
+    font-family: var(--font-display);
+    letter-spacing: -0.01em;
+  }
+}

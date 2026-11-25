@@ -1,0 +1,401 @@
+openapi: 3.1.0
+info:
+  title: Созвездие API
+  version: 0.1.0
+  description: |
+    API MVP: вход по SMS, проекты и бриф, подбор команды, приглашения.
+    Реализация — Route Handlers Next.js в `src/app/api`, логика — `src/server`, БД — PostgreSQL (`db/`).
+    Сессия — httpOnly cookie `sz_session` (30 дней). Изменяющие запросы — только JSON и только со своего сайта (проверка Origin).
+    Ошибки всегда в формате `{ "error": { "message": "...", "code": "..." } }`; message можно показывать пользователю.
+servers:
+  - url: /api
+
+components:
+  securitySchemes:
+    session:
+      type: apiKey
+      in: cookie
+      name: sz_session
+  responses:
+    Error:
+      description: Ошибка
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [message]
+          properties:
+            message: { type: string }
+            code: { type: string, description: "Машинный код: no_account, already_registered, too_soon, wrong_code, locked, invited, stale, not_filled …" }
+    Me:
+      type: object
+      required: [user, profile]
+      properties:
+        user:
+          type: object
+          properties: { id: { type: string, format: uuid }, phone: { type: string, example: "+79991234567" } }
+        profile:
+          oneOf:
+            - type: "null"
+            - type: object
+              properties:
+                displayName: { type: string }
+                slug: { type: string, pattern: "^[a-z0-9](?:[a-z0-9_-]{1,30}[a-z0-9])$" }
+                clientMode: { type: boolean }
+                specialistMode: { type: boolean }
+                avatarUrl: { type: [string, "null"], description: "/avatars/<preset>.webp или /api/media/<id>; null — показываем инициалы" }
+    AvatarRef:
+      oneOf:
+        - type: "null"
+        - type: object
+          required: [kind, preset]
+          properties:
+            kind: { const: preset }
+            preset: { $ref: "#/components/schemas/AvatarPreset" }
+        - type: object
+          required: [kind, mediaId]
+          properties:
+            kind: { const: upload }
+            mediaId: { type: string, format: uuid }
+    AvatarPreset:
+      type: string
+      enum: [director, camera, producer, writer, editor, colorist, sound, gaffer, art, makeup, actor, clapper]
+    AvatarResponse:
+      type: object
+      required: [avatar, avatarUrl]
+      properties:
+        avatar: { $ref: "#/components/schemas/AvatarRef" }
+        avatarUrl: { type: [string, "null"] }
+    ImageUpload:
+      type: object
+      required: [file]
+      properties:
+        file: { type: string, format: binary, description: "JPEG, PNG, WebP или AVIF, до 10 МБ. Сервер пересобирает в WebP и удаляет метаданные" }
+    RoleSlot:
+      type: object
+      required: [key, roleId, levelMin, qty, shifts, budget, mustHave]
+      properties:
+        key: { type: string, description: "id слота (uuid) после сохранения; для новых строк — любой локальный ключ" }
+        roleId: { type: string, enum: [director, dop, gaffer, sound, art, producer, writer, editor, colorist] }
+        levelMin: { type: string, enum: [any, junior, middle, senior, lead] }
+        qty: { type: integer, minimum: 1, maximum: 20 }
+        shifts: { type: integer, minimum: 0, maximum: 60 }
+        budget: { type: [integer, "null"], description: "На роль целиком, ₽. null — «рассчитаем» по типовым долям" }
+        mustHave: { type: boolean }
+    Brief:
+      type: object
+      description: Бриф проекта. Коды справочников — как в db/seeds/0001_dictionaries.sql.
+      required: [title, city, formatId, goal, prepStart, shootDates, deliveryDate, slots, budgetMin, budgetMax, budgetFlex, budgetScope, legal, styleTagIds, references, workStyle, consent]
+      properties:
+        title: { type: string, maxLength: 120 }
+        city: { type: string, example: Санкт-Петербург }
+        formatId: { type: string, example: ad }
+        goal: { type: string }
+        prepStart: { type: string, description: "YYYY-MM-DD или пусто" }
+        shootDates: { type: array, items: { type: string, format: date }, maxItems: 30 }
+        deliveryDate: { type: string, description: "YYYY-MM-DD или пусто" }
+        slots: { type: array, items: { $ref: "#/components/schemas/RoleSlot" }, maxItems: 20 }
+        budgetMin: { type: [integer, "null"] }
+        budgetMax: { type: [integer, "null"] }
+        budgetFlex: { type: string, enum: [strict, pm15, negotiable] }
+        budgetScope: { type: string, enum: [fees, fees_equipment] }
+        legal: { type: array, items: { type: string, enum: [self_employed, ip, ooo, individual] } }
+        styleTagIds: { type: array, items: { type: string }, maxItems: 5 }
+        references: { type: array, items: { type: object, properties: { url: { type: string }, comment: { type: string } } } }
+        workStyle:
+          type: object
+          properties:
+            revisions: { type: string, enum: ["1", "2-3", "4+"] }
+            involvement: { type: string, enum: [freedom, stages, every_step] }
+            channel: { type: string, enum: [telegram, email, calls] }
+            pace: { type: string, enum: [fast, thorough] }
+        consent: { type: boolean }
+    InvitationStatus:
+      type: string
+      enum: [sent, viewed, accepted, declined, expired, withdrawn, cancelled]
+    Invitation:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        slotKey: { type: string, format: uuid }
+        specialistId: { type: string, format: uuid }
+        specialistName: { type: string }
+        specialistAvatarUrl: { type: [string, "null"] }
+        cost: { type: integer }
+        status: { $ref: "#/components/schemas/InvitationStatus" }
+        sentAt: { type: string }
+        expiresAt: { type: string }
+        declineReason: { type: string }
+        replacesId: { type: string, format: uuid }
+        phone: { type: string, description: "Только после принятия приглашения" }
+    ProjectDetail:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        status: { type: string, enum: [draft, matching, team_selected, in_progress, delivered, cancelled] }
+        version: { type: integer }
+        brief: { $ref: "#/components/schemas/Brief" }
+        tier: { type: string, enum: [economy, optimum, premium] }
+        invitations: { type: array, items: { $ref: "#/components/schemas/Invitation" } }
+        manualSlots: { type: array, items: { type: string, format: uuid }, description: "Слоты в ручном подборе" }
+    ProjectListItem:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string }
+        format: { type: string }
+        city: { type: string }
+        status: { type: string }
+        myPart: { type: string, enum: [client, specialist] }
+        myRole: { type: string }
+        shootDates: { type: array, items: { type: string } }
+        deliveryDate: { type: string }
+        budgetMax: { type: integer, description: "Только заказчику" }
+        teamFilled: { type: integer }
+        teamTotal: { type: integer }
+        myInvitation: { type: object, properties: { id: { type: string }, status: { $ref: "#/components/schemas/InvitationStatus" } } }
+    MatchingResponse:
+      type: object
+      description: |
+        Три состава и все кандидаты по ролям. Структура SlotResult / Configuration / Candidate —
+        как в src/lib/team-search/types.ts. Балл 0–100 из 6 компонентов (портфолио 25%, роль 20%,
+        бюджет 15%, надёжность 15%, занятость 10%, стиль 15%).
+      properties:
+        projectId: { type: string, format: uuid }
+        brief: { $ref: "#/components/schemas/Brief" }
+        results: { type: array, items: { type: object } }
+        configs: { type: object, properties: { economy: { type: object }, optimum: { type: object }, premium: { type: object } } }
+        recommended: { type: string, enum: [economy, optimum, premium] }
+
+security:
+  - session: []
+
+paths:
+  /auth/otp:
+    post:
+      summary: Отправить код из SMS
+      description: Не чаще раза в 60 с и не больше 5 раз в час на номер. В режиме разработки код в ответе (devCode) и в терминале.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [phone, purpose]
+              properties:
+                phone: { type: string, example: "+7 (999) 100-99-99" }
+                purpose: { type: string, enum: [signup, login] }
+      responses:
+        "200":
+          description: Код отправлен
+          content: { application/json: { schema: { type: object, properties: { resendIn: { type: integer }, devCode: { type: string } } } } }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+  /auth/verify:
+    post:
+      summary: Проверить код; регистрация создаёт аккаунт с согласиями, вход — сессию
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [phone, code, purpose]
+              properties:
+                phone: { type: string }
+                code: { type: string, pattern: "^\\d{4,6}$" }
+                purpose: { type: string, enum: [signup, login] }
+                consents:
+                  type: object
+                  description: Обязательно при регистрации; adult, terms, pdn должны быть true
+                  properties: { adult: { type: boolean }, terms: { type: boolean }, pdn: { type: boolean }, marketing: { type: boolean } }
+      responses:
+        "200":
+          description: Вход выполнен, cookie sz_session установлена
+          content: { application/json: { schema: { type: object, properties: { needsOnboarding: { type: boolean } } } } }
+        "400": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/Error" }
+  /auth/logout:
+    post:
+      summary: Выйти (сессия отзывается в БД)
+      responses: { "200": { description: OK } }
+  /me:
+    get:
+      summary: Кто вошёл. Гостю — { me null }
+      security: []
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { type: object, properties: { me: { oneOf: [{ type: "null" }, { $ref: "#/components/schemas/Me" }] } } } } }
+  /me/onboarding:
+    post:
+      summary: Имя и режимы; при первом вызове создаёт профиль и адрес страницы
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [displayName, client, specialist]
+              properties: { displayName: { type: string, minLength: 2, maxLength: 80 }, client: { type: boolean }, specialist: { type: boolean } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { type: object, properties: { me: { $ref: "#/components/schemas/Me" } } } } } }
+        "401": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+  /me/avatar:
+    post:
+      summary: Своё фото в аватар. Обрезается до 512×512, старое своё фото удаляется
+      requestBody: { required: true, content: { multipart/form-data: { schema: { $ref: "#/components/schemas/ImageUpload" } } } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/AvatarResponse" } } } }
+        "401": { $ref: "#/components/responses/Error" }
+        "413": { $ref: "#/components/responses/Error" }
+        "415": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/Error" }
+    put:
+      summary: Готовая медведица ({ preset }) или убрать аватар ({ preset null })
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [preset]
+              properties: { preset: { oneOf: [{ type: "null" }, { $ref: "#/components/schemas/AvatarPreset" }] } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/AvatarResponse" } } } }
+        "400": { $ref: "#/components/responses/Error" }
+  /media:
+    post:
+      summary: Загрузить картинку для портфолио (до 2000 px, WebP). Не больше 100 на человека и 30 загрузок в час
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/ImageUpload"
+                - type: object
+                  required: [purpose]
+                  properties: { purpose: { const: portfolio } }
+      responses:
+        "201":
+          description: Сохранено
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  media: { type: object, properties: { id: { type: string, format: uuid }, url: { type: string }, width: { type: integer }, height: { type: integer } } }
+        "413": { $ref: "#/components/responses/Error" }
+        "415": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+  /media/{id}:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+    get:
+      summary: Картинка. Аватары — всем, кэш «навсегда»; портфолио — пока только владельцу
+      security: []
+      responses:
+        "200": { description: OK, content: { image/webp: { schema: { type: string, format: binary } } } }
+        "304": { description: Не изменилась (If-None-Match) }
+        "404": { $ref: "#/components/responses/Error" }
+    delete:
+      summary: Удалить свою картинку. Если она стояла в аватаре, аватар обнулится
+      responses:
+        "204": { description: Удалено }
+        "404": { $ref: "#/components/responses/Error" }
+  /projects:
+    get:
+      summary: Мои проекты — где я заказчик и куда меня пригласили
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { type: object, properties: { projects: { type: array, items: { $ref: "#/components/schemas/ProjectListItem" } } } } } } }
+        "401": { $ref: "#/components/responses/Error" }
+    post:
+      summary: Новый проект-черновик из брифа
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/Brief" } } } }
+      responses:
+        "201": { description: Создан, content: { application/json: { schema: { type: object, properties: { id: { type: string, format: uuid } } } } } }
+        "400": { $ref: "#/components/responses/Error" }
+  /projects/{id}:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+    get:
+      summary: Проект с брифом и приглашениями (только владельцу)
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/ProjectDetail" } } } }
+        "404": { $ref: "#/components/responses/Error" }
+    put:
+      summary: Сохранить бриф
+      description: Если по текущей версии брифа уже был подбор — создаётся version+1 со своими слотами, статус возвращается в draft. После отправки приглашений — 409 locked.
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/Brief" } } } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/ProjectDetail" } } } }
+        "409": { $ref: "#/components/responses/Error" }
+  /projects/{id}/matching:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+    post:
+      summary: Подобрать три состава по текущей версии брифа
+      description: Сохраняет team_configurations и configuration_members, ставит статус matching, создаёт заявки на ручной подбор. 422 — бриф неполный; 409 invited — приглашения уже отправлены.
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/MatchingResponse" } } } }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+  /projects/{id}/invitations:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+    post:
+      summary: Отправить приглашения выбранному составу
+      description: Сервер сам проверяет допуск каждого кандидата и считает стоимость (candidates_for_slot). Приглашение живёт 48 часов; у специалиста не больше 3 открытых.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tier, members]
+              properties:
+                tier: { type: string, enum: [economy, optimum, premium] }
+                members: { type: array, items: { type: object, properties: { slotKey: { type: string, format: uuid }, specialistId: { type: string, format: uuid } } } }
+      responses:
+        "201": { description: Отправлено, content: { application/json: { schema: { $ref: "#/components/schemas/ProjectDetail" } } } }
+        "409": { $ref: "#/components/responses/Error" }
+  /projects/{id}/team:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+    post:
+      summary: Зафиксировать команду (все роли, кроме ручного подбора, закрыты)
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/ProjectDetail" } } } }
+        "409": { $ref: "#/components/responses/Error" }
+  /invitations/{id}/replace:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+    post:
+      summary: Пригласить замену после отказа — следующего по баллу кандидата
+      responses:
+        "201": { description: Замена приглашена }
+        "409": { $ref: "#/components/responses/Error" }
+  /invitations/{id}/respond:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+    post:
+      summary: Ответ специалиста на приглашение
+      description: При accept даты съёмки блокируются в календаре специалиста, контакты открываются заказчику.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [accept], properties: { accept: { type: boolean }, reason: { type: string, maxLength: 300 } } } } }
+      responses:
+        "200": { description: OK }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /dev/projects/{id}/simulate:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+    post:
+      summary: Только в режиме разработки — ответы за специалистов (все принимают, кроме второго)
+      responses: { "200": { description: OK } }
